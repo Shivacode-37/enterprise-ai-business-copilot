@@ -14,7 +14,7 @@ import streamlit as st
 from app.services.analysis_service import AnalysisService
 from app.services.summary_service import (
     answer_business_question,
-    generate_executive_summary,
+    
 )
 
 st.set_page_config(page_title="AI Business Analyst Copilot", layout="wide")
@@ -31,6 +31,7 @@ if uploaded_file is not None:
 
     metrics = result["metrics"]
     summary = result["summary"]
+    ai_summary = result["ai_summary"]
 
     st.divider()
 
@@ -69,8 +70,8 @@ if uploaded_file is not None:
     st.write(f"Loss Ratio: **{summary['highest_loss_ratio']}%**")
     st.write(f"Risk Level: **{summary['risk_level']}**")
 
-    st.subheader("🧠 Executive Summary")
-    st.info(generate_executive_summary(summary))
+    st.subheader("🤖 Ai Executive Summary")
+    st.info(ai_summary)
 
     st.subheader("❓ Ask a Business Question")
 
