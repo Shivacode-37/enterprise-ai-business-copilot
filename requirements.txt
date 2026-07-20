@@ -9,3 +9,4 @@ matplotlib
 plotly
 chromadb langchain-community pypdf sentence-transformers
 langchain-huggingface
+langchain-chroma

@@ -8,7 +8,9 @@ class Settings(BaseSettings):
     LLM_PROVIDER : str
     LLM_MODEL : str
     LLM_API_KEY : str
+    OPENAI_API_KEY: str
     LOG_LEVEL :str
+
 
 
     model_config = SettingsConfigDict(
