@@ -5,11 +5,9 @@ pydantic
 pydantic-settings
 pandas
 streamlit
-matplotlib
 plotly
-chromadb
-langchain-community
-pypdf
-sentence-transformers
-langchain-huggingface
-langchain-chroma
+matplotlib
+python-multipart
+requests
+langchain
+
