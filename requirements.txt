@@ -7,6 +7,9 @@ pandas
 streamlit
 matplotlib
 plotly
-chromadb langchain-community pypdf sentence-transformers
+chromadb
+langchain-community
+pypdf
+sentence-transformers
 langchain-huggingface
 langchain-chroma
