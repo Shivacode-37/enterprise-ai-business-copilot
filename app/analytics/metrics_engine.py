@@ -1,19 +1,7 @@
 import pandas as pd
 from app.schema.models import SchemaMapping
 from app.schema.column_accessor import ColumnAccessor
-# ---------------------------
-# Column normalization
-# ---------------------------
-def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = (
-        df.columns
-        .str.strip()
-        .str.lower()
-        .str.replace(r"[^\w]+", "_", regex=True)
-    )
-    return df
-
+from app.schema.capabilities import DatasetCapabilities
 
 # ---------------------------
 # Day 2 – Core KPIs
@@ -22,26 +10,75 @@ def compute_kpis(
     df: pd.DataFrame,
     mapping: SchemaMapping,
 ) -> dict:
-    df = normalize_columns(df)
+
+
     cols = ColumnAccessor(mapping)
+    caps = DatasetCapabilities(mapping)
 
-    total_revenue = df[cols.sales].sum()
-    total_profit = df[cols.profit].sum()
-    profit_margin = (total_profit / total_revenue) * 100
+    metrics = {}
 
-    total_orders = df[cols.order_id].nunique()
-    loss_orders = df[df[cols.profit] < 0][cols.order_id].nunique()
-    loss_order_pct = (loss_orders / total_orders) * 100
+    # ---------- Revenue ----------
+    if caps.has("sales"):
+        metrics["total_revenue"] = round(
+            df[cols.sales].sum(),
+            2,
+        )
+    else:
+        metrics["total_revenue"] = None
 
-    return {
-        "total_revenue": round(total_revenue, 2),
-        "total_profit": round(total_profit, 2),
-        "profit_margin_pct": round(profit_margin, 2),
-        "total_orders": total_orders,
-        "loss_order_pct": round(loss_order_pct, 2),
-    }
+    # ---------- Profit ----------
+    if caps.has("profit"):
+        metrics["total_profit"] = round(
+            df[cols.profit].sum(),
+            2,
+        )
+    else:
+        metrics["total_profit"] = None
 
+    # ---------- Profit Margin ----------
+    if caps.can_compute_kpis():
 
+        revenue = df[cols.sales].sum()
+        profit = df[cols.profit].sum()
+
+        metrics["profit_margin_pct"] = (
+            round((profit / revenue) * 100, 2)
+            if revenue != 0
+            else 0
+        )
+
+    else:
+        metrics["profit_margin_pct"] = None
+
+    # ---------- Orders ----------
+    if caps.can_analyze_orders():
+
+        total_orders = df[cols.order_id].nunique()
+
+        metrics["total_orders"] = total_orders
+
+        if caps.has("profit"):
+
+            loss_orders = (
+                df[df[cols.profit] < 0][cols.order_id]
+                .nunique()
+            )
+
+            metrics["loss_order_pct"] = (
+                round((loss_orders / total_orders) * 100, 2)
+                if total_orders != 0
+                else 0
+            )
+
+        else:
+            metrics["loss_order_pct"] = None
+
+    else:
+
+        metrics["total_orders"] = None
+        metrics["loss_order_pct"] = None
+
+    return metrics
 # ---------------------------
 # Day 3 – Helper functions
 # ---------------------------
@@ -50,7 +87,7 @@ def profit_by_dimension(
     mapping: SchemaMapping,
     dimension: str,
 ) -> pd.DataFrame:
-    df = normalize_columns(df)
+    # df = normalize_columns(df)
     cols = ColumnAccessor(mapping)
 
     if dimension not in df.columns:
@@ -78,44 +115,76 @@ def worst_performers(
 ) -> dict:
 
     cols = ColumnAccessor(mapping)
+    caps = DatasetCapabilities(mapping)
 
-    return {
-        "worst_category": profit_by_dimension(
-            df,
-            mapping,
-            cols.category,
-        ).iloc[0][cols.category],
+    result = {}
 
-        "worst_sub_category": profit_by_dimension(
-            df,
-            mapping,
-            cols.sub_category,
-        ).iloc[0][cols.sub_category],
+    if caps.can_analyze_category():
+        result["worst_category"] = (
+            profit_by_dimension(
+                df,
+                mapping,
+                cols.category,
+            )
+            .iloc[0][cols.category]
+        )
 
-        "worst_region": profit_by_dimension(
-            df,
-            mapping,
-            cols.region,
-        ).iloc[0][cols.region],
+    if caps.can_analyze_sub_category():
+        result["worst_sub_category"] = (
+            profit_by_dimension(
+                df,
+                mapping,
+                cols.sub_category,
+            )
+            .iloc[0][cols.sub_category]
+        )
 
-        "worst_segment": profit_by_dimension(
-            df,
-            mapping,
-            cols.segment,
-        ).iloc[0][cols.segment],
-    }
+    if caps.can_analyze_region():
+        result["worst_region"] = (
+            profit_by_dimension(
+                df,
+                mapping,
+                cols.region,
+            )
+            .iloc[0][cols.region]
+        )
+
+    if caps.can_analyze_segment():
+        result["worst_segment"] = (
+            profit_by_dimension(
+                df,
+                mapping,
+                cols.segment,
+            )
+            .iloc[0][cols.segment]
+        )
+
+    return result
 
 def high_sales_negative_profit(
     df: pd.DataFrame,
     mapping: SchemaMapping,
-) -> pd.DataFrame:
+) -> pd.DataFrame | None:
 
-    df = normalize_columns(df)
+    # df = normalize_columns(df)
     cols = ColumnAccessor(mapping)
+    caps = DatasetCapabilities(mapping)
+
+    # Required columns
+    required = [
+        "sales",
+        "profit",
+        "order_id",
+        "category",
+        "sub_category",
+    ]
+
+    if not all(caps.has(field) for field in required):
+        return None
 
     sales_threshold = df[cols.sales].median()
 
-    return df[
+    result = df[
         (df[cols.sales] > sales_threshold)
         & (df[cols.profit] < 0)
     ][
@@ -123,20 +192,39 @@ def high_sales_negative_profit(
             cols.order_id,
             cols.sales,
             cols.profit,
-            cols.discount,
             cols.category,
             cols.sub_category,
         ]
     ]
 
+    # Include discount only if available
+    if caps.can_analyze_discount():
+        result[cols.discount] = df.loc[
+            result.index,
+            cols.discount,
+        ]
+
+    return result.reset_index(drop=True)
+
+
 
 def discount_profit_analysis(
     df: pd.DataFrame,
     mapping: SchemaMapping,
-) -> pd.DataFrame:
+) -> pd.DataFrame | None:
 
-    df = normalize_columns(df)
+    # df = normalize_columns(df)
     cols = ColumnAccessor(mapping)
+    caps = DatasetCapabilities(mapping)
+
+    # Required columns
+    if not (
+        caps.can_analyze_discount()
+        and caps.has("sales")
+        and caps.has("profit")
+        and caps.can_analyze_orders()
+    ):
+        return None
 
     bins = [-0.01, 0.10, 0.20, 0.30, 1.0]
     labels = ["0-10%", "10-20%", "20-30%", "30%+"]
@@ -160,8 +248,14 @@ def discount_profit_analysis(
     )
 
     summary["profit_margin_pct"] = (
-        summary["total_profit"] / summary["total_sales"] * 100
+        summary["total_profit"]
+        / summary["total_sales"]
+        * 100
     )
+
+    summary["profit_margin_pct"] = summary[
+        "profit_margin_pct"
+    ].fillna(0)
 
     return summary
 # ---------------------------
@@ -172,87 +266,124 @@ def compute_advanced_metrics(
     mapping: SchemaMapping,
 ) -> dict:
 
-    df = normalize_columns(df)
+    # df = normalize_columns(df)
+
     cols = ColumnAccessor(mapping)
+    caps = DatasetCapabilities(mapping)
 
     metrics = {}
 
-    # ---------- Core Breakdowns ----------
-    metrics["profit_by_category"] = profit_by_dimension(
-        df,
-        mapping,
-        cols.category,
-    )
+    # ---------- Core KPIs ----------
+    if caps.can_compute_kpis():
+        metrics["kpis"] = compute_kpis(
+            df,
+            mapping,
+        )
 
-    metrics["profit_by_sub_category"] = profit_by_dimension(
-        df,
-        mapping,
-        cols.sub_category,
-    )
+    # ---------- Profit Breakdowns ----------
+    if caps.can_analyze_category():
+        metrics["profit_by_category"] = profit_by_dimension(
+            df,
+            mapping,
+            cols.category,
+        )
 
-    metrics["profit_by_region"] = profit_by_dimension(
-        df,
-        mapping,
-        cols.region,
-    )
+    if caps.can_analyze_sub_category():
+        metrics["profit_by_sub_category"] = profit_by_dimension(
+            df,
+            mapping,
+            cols.sub_category,
+        )
 
-    metrics["profit_by_segment"] = profit_by_dimension(
-        df,
-        mapping,
-        cols.segment,
-    )
+    if caps.can_analyze_region():
+        metrics["profit_by_region"] = profit_by_dimension(
+            df,
+            mapping,
+            cols.region,
+        )
+
+    if caps.can_analyze_segment():
+        metrics["profit_by_segment"] = profit_by_dimension(
+            df,
+            mapping,
+            cols.segment,
+        )
 
     # ---------- Diagnostic Insights ----------
-    metrics["worst_performers"] = worst_performers(
+    worst = worst_performers(
         df,
         mapping,
     )
 
-    metrics["discount_analysis"] = discount_profit_analysis(
+    if worst:
+        metrics["worst_performers"] = worst
+
+    discount = discount_profit_analysis(
         df,
         mapping,
     )
 
-    metrics["high_sales_negative_profit"] = high_sales_negative_profit(
+    if discount is not None:
+        metrics["discount_analysis"] = discount
+
+    negative_profit = high_sales_negative_profit(
         df,
         mapping,
     )
 
-    # ---------- Validation Layer ----------
-    metrics["structural_collapse_by_category"] = consistency_analysis(
-        df,
-        mapping,
-        cols.category,
-    )
+    if negative_profit is not None:
+        metrics["high_sales_negative_profit"] = negative_profit
 
-    metrics["structural_inefficiency_by_category"] = order_loss_consistency(
-        df,
-        mapping,
-        cols.category,
-    )
+    # ---------- Validation ----------
+    if caps.can_analyze_category():
+
+        collapse = consistency_analysis(
+            df,
+            mapping,
+            cols.category,
+        )
+
+        if collapse is not None:
+            metrics["structural_collapse_by_category"] = collapse
+
+        inefficiency = order_loss_consistency(
+            df,
+            mapping,
+            cols.category,
+        )
+
+        if inefficiency is not None:
+            metrics["structural_inefficiency_by_category"] = inefficiency
 
     # ---------- Executive Score ----------
-    metrics["business_health"] = profit_health_score(
+    health = profit_health_score(
         df,
         mapping,
     )
 
+    if health:
+        metrics["business_health"] = health
+
     return metrics
+
 
 def consistency_analysis(
     df: pd.DataFrame,
     mapping: SchemaMapping,
     dimension: str,
-) -> pd.DataFrame:
+) -> pd.DataFrame | None:
 
-    df = normalize_columns(df)
+    # df = normalize_columns(df)
     cols = ColumnAccessor(mapping)
+    caps = DatasetCapabilities(mapping)
 
-    if dimension not in df.columns:
-        raise ValueError(f"Column '{dimension}' not found")
-
-    if cols.year is None:
-        raise ValueError("Year column not detected")
+    if (
+        not caps.can_analyze_time()
+        or not caps.has("profit")
+        or dimension is None
+        or dimension not in df.columns
+    ):
+        return None
 
     summary = (
         df.groupby([dimension, cols.year])
@@ -273,8 +404,8 @@ def consistency_analysis(
     )
 
     consistency["loss_consistency_ratio"] = (
-        consistency["loss_periods"] /
-        consistency["total_periods"]
+        consistency["loss_periods"]
+        / consistency["total_periods"]
     )
 
     return consistency.sort_values(
@@ -286,38 +417,60 @@ def consistency_analysis(
 def profit_health_score(
     df: pd.DataFrame,
     mapping: SchemaMapping,
-) -> dict:
+) -> dict | None:
 
     kpis = compute_kpis(
         df,
         mapping,
     )
 
+    # Cannot compute health without core KPIs
+    if (
+        kpis["profit_margin_pct"] is None
+        or kpis["loss_order_pct"] is None
+    ):
+        return None
+
     score = 100
 
-    # Weighted penalties
-    score -= max(0, -kpis["profit_margin_pct"]) * 2
-    score -= max(0, kpis["loss_order_pct"] - 15) * 1.5
+    # Profit Margin Penalty
+    score -= max(
+        0,
+        -kpis["profit_margin_pct"],
+    ) * 2
+
+    # Loss Order Penalty
+    score -= max(
+        0,
+        kpis["loss_order_pct"] - 15,
+    ) * 1.5
 
     return {
         "health_score": round(max(score, 0), 2),
         "profit_margin_pct": kpis["profit_margin_pct"],
         "loss_order_pct": kpis["loss_order_pct"],
     }
+
+
 def order_loss_consistency(
     df: pd.DataFrame,
     mapping: SchemaMapping,
     dimension: str,
-) -> pd.DataFrame:
+) -> pd.DataFrame | None:
 
-    df = normalize_columns(df)
+    # df = normalize_columns(df)
     cols = ColumnAccessor(mapping)
+    caps = DatasetCapabilities(mapping)
 
-    if dimension not in df.columns:
-        raise ValueError(f"Column '{dimension}' not found")
-
-    if cols.year is None:
-        raise ValueError("Year column not detected")
+    # Required fields
+    if (
+        not caps.can_analyze_orders()
+        or not caps.can_analyze_time()
+        or not caps.has("profit")
+        or dimension is None
+        or dimension not in df.columns
+    ):
+        return None
 
     summary = (
         df.groupby([dimension, cols.year])
@@ -329,8 +482,8 @@ def order_loss_consistency(
     )
 
     summary["loss_order_ratio"] = (
-        summary["loss_orders"] /
-        summary["total_orders"]
+        summary["loss_orders"]
+        / summary["total_orders"]
     )
 
     consistency = (
